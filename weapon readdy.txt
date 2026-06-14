@@ -1,0 +1,351 @@
+# ============================================================
+# WEAPON DETECTION - INFERENCE SCRIPT
+# Red Box = Weapon (pistol, knife)
+# Green Box = Non-Weapon (smartphone, purse, currency, card)
+# ============================================================
+
+import cv2
+import torch
+from ultralytics import YOLO
+import os
+import time
+from datetime import datetime
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+# Path to trained model weights
+MODEL_PATH =r"D:\Projects\Advance security systerm\mubeen weapon weaight 100 working\weights\best.pt"
+
+# Detection settings
+CONFIDENCE = 0.5        # Minimum confidence (0.0 - 1.0)
+IMG_SIZE = 640
+
+# Camera settings
+CAMERA_INDEX = 0        # 0 = default camera
+
+# ============================================================
+# CLASS CONFIGURATION (Must match your data.yaml order)
+# ============================================================
+
+CLASS_NAMES = ['pistol', 'smartphone', 'knife', 'purse', 'currency', 'card']
+
+# Weapon class IDs (RED box)
+WEAPON_CLASSES = [0, 2]  # pistol, knife
+
+# Non-weapon class IDs (GREEN box)
+NON_WEAPON_CLASSES = [1, 3, 4, 5]  # smartphone, purse, currency, card
+
+# Colors (BGR format)
+RED = (0, 0, 255)
+GREEN = (0, 255, 0)
+WHITE = (255, 255, 255)
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def get_color(class_id):
+    """Return RED for weapons, GREEN for non-weapons"""
+    if class_id in WEAPON_CLASSES:
+        return RED
+    return GREEN
+
+def get_label(class_id):
+    """Return category label"""
+    if class_id in WEAPON_CLASSES:
+        return "WEAPON"
+    return "NON-WEAPON"
+
+def draw_box(frame, box, class_id, confidence):
+    """Draw bounding box with label"""
+    x1, y1, x2, y2 = map(int, box)
+    color = get_color(class_id)
+    label = get_label(class_id)
+    name = CLASS_NAMES[class_id]
+    
+    # Draw box
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
+    
+    # Label text
+    text = f"{name} ({label}) {confidence:.2f}"
+    
+    # Label background
+    (w, h), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    cv2.rectangle(frame, (x1, y1 - h - 10), (x1 + w + 10, y1), color, -1)
+    
+    # Label text
+    cv2.putText(frame, text, (x1 + 5, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, WHITE, 2)
+    
+    return frame
+
+def draw_stats(frame, weapon_count, non_weapon_count, fps):
+    """Draw stats panel"""
+    # Background
+    cv2.rectangle(frame, (10, 10), (300, 120), (0, 0, 0), -1)
+    cv2.rectangle(frame, (10, 10), (300, 120), WHITE, 2)
+    
+    # Text
+    cv2.putText(frame, "WEAPON DETECTION", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6, WHITE, 2)
+    cv2.putText(frame, f"FPS: {fps:.1f}", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, WHITE, 1)
+    cv2.putText(frame, f"Weapons: {weapon_count}", (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.5, RED, 2)
+    cv2.putText(frame, f"Non-Weapons: {non_weapon_count}", (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, GREEN, 2)
+    
+    # Alert if weapon detected
+    if weapon_count > 0:
+        h, w = frame.shape[:2]
+        cv2.putText(frame, "!! WEAPON DETECTED !!", (w//2 - 150, 50), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, RED, 3)
+    
+    return frame
+
+# ============================================================
+# DETECTION FUNCTIONS
+# ============================================================
+
+def detect_camera():
+    """Live camera detection"""
+    
+    print("\n" + "=" * 50)
+    print("       LIVE CAMERA DETECTION")
+    print("=" * 50)
+    
+    # Load model
+    print(f"Loading model: {MODEL_PATH}")
+    model = YOLO(MODEL_PATH)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using: {device.upper()}")
+    
+    # Open camera
+    print(f"Opening camera {CAMERA_INDEX}...")
+    cap = cv2.VideoCapture(CAMERA_INDEX)
+    
+    if not cap.isOpened():
+        print("ERROR: Cannot open camera!")
+        return
+    
+    print("\nControls:")
+    print("  'q' = Quit")
+    print("  's' = Screenshot")
+    print("\nStarting detection...\n")
+    
+    # Create screenshots folder
+    os.makedirs("screenshots", exist_ok=True)
+    
+    # FPS calculation
+    fps = 0
+    frame_count = 0
+    start_time = time.time()
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Calculate FPS
+        frame_count += 1
+        if time.time() - start_time >= 1:
+            fps = frame_count
+            frame_count = 0
+            start_time = time.time()
+        
+        # Detect
+        results = model.predict(frame, conf=CONFIDENCE, imgsz=IMG_SIZE, verbose=False)
+        
+        # Count detections
+        weapon_count = 0
+        non_weapon_count = 0
+        
+        # Draw boxes
+        for result in results:
+            if result.boxes is not None:
+                for box in result.boxes:
+                    class_id = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    xyxy = box.xyxy[0].cpu().numpy()
+                    
+                    if class_id in WEAPON_CLASSES:
+                        weapon_count += 1
+                    else:
+                        non_weapon_count += 1
+                    
+                    frame = draw_box(frame, xyxy, class_id, conf)
+        
+        # Draw stats
+        frame = draw_stats(frame, weapon_count, non_weapon_count, fps)
+        
+        # Show frame
+        cv2.imshow("Weapon Detection - Press 'q' to quit", frame)
+        
+        # Key handling
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            break
+        elif key == ord('s'):
+            filename = f"screenshots/detection_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+            cv2.imwrite(filename, frame)
+            print(f"Screenshot saved: {filename}")
+    
+    cap.release()
+    cv2.destroyAllWindows()
+    print("\nCamera stopped.")
+
+
+def detect_image(image_path):
+    """Detect on single image"""
+    
+    print(f"\nProcessing: {image_path}")
+    
+    if not os.path.exists(image_path):
+        print(f"ERROR: Image not found!")
+        return
+    
+    # Load model
+    model = YOLO(MODEL_PATH)
+    
+    # Read image
+    frame = cv2.imread(image_path)
+    
+    # Detect
+    results = model.predict(frame, conf=CONFIDENCE, imgsz=IMG_SIZE, verbose=False)
+    
+    # Count and draw
+    weapon_count = 0
+    non_weapon_count = 0
+    
+    for result in results:
+        if result.boxes is not None:
+            for box in result.boxes:
+                class_id = int(box.cls[0])
+                conf = float(box.conf[0])
+                xyxy = box.xyxy[0].cpu().numpy()
+                
+                if class_id in WEAPON_CLASSES:
+                    weapon_count += 1
+                else:
+                    non_weapon_count += 1
+                
+                frame = draw_box(frame, xyxy, class_id, conf)
+    
+    # Draw stats
+    frame = draw_stats(frame, weapon_count, non_weapon_count, 0)
+    
+    # Save output
+    output_path = "detected_" + os.path.basename(image_path)
+    cv2.imwrite(output_path, frame)
+    
+    print(f"\nResults:")
+    print(f"  Weapons detected: {weapon_count}")
+    print(f"  Non-weapons detected: {non_weapon_count}")
+    print(f"  Output saved: {output_path}")
+    
+    # Show image
+    cv2.imshow("Detection Result - Press any key to close", frame)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+def detect_video(video_path):
+    """Detect on video file"""
+    
+    print(f"\nProcessing video: {video_path}")
+    
+    if not os.path.exists(video_path):
+        print("ERROR: Video not found!")
+        return
+    
+    # Load model
+    model = YOLO(MODEL_PATH)
+    
+    # Open video
+    cap = cv2.VideoCapture(video_path)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    # Output video
+    output_path = "detected_" + os.path.basename(video_path)
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    print(f"Total frames: {total_frames}")
+    print("Processing...")
+    
+    frame_num = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        frame_num += 1
+        if frame_num % 50 == 0:
+            print(f"  Progress: {frame_num}/{total_frames} ({100*frame_num/total_frames:.0f}%)")
+        
+        # Detect
+        results = model.predict(frame, conf=CONFIDENCE, imgsz=IMG_SIZE, verbose=False)
+        
+        # Count and draw
+        weapon_count = 0
+        non_weapon_count = 0
+        
+        for result in results:
+            if result.boxes is not None:
+                for box in result.boxes:
+                    class_id = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    xyxy = box.xyxy[0].cpu().numpy()
+                    
+                    if class_id in WEAPON_CLASSES:
+                        weapon_count += 1
+                    else:
+                        non_weapon_count += 1
+                    
+                    frame = draw_box(frame, xyxy, class_id, conf)
+        
+        frame = draw_stats(frame, weapon_count, non_weapon_count, fps)
+        out.write(frame)
+    
+    cap.release()
+    out.release()
+    print(f"\nDone! Output saved: {output_path}")
+
+
+# ============================================================
+# MAIN MENU
+# ============================================================
+
+if __name__ == "__main__":
+    
+    print("\n" + "=" * 50)
+    print("       WEAPON DETECTION SYSTEM")
+    print("=" * 50)
+    print("\nClasses:")
+    print("  RED   = Weapons (pistol, knife)")
+    print("  GREEN = Non-Weapons (smartphone, purse, currency, card)")
+    print("\nOptions:")
+    print("  1. Live Camera Detection")
+    print("  2. Detect from Image")
+    print("  3. Detect from Video")
+    print("=" * 50)
+    
+    # Check model exists
+    if not os.path.exists(MODEL_PATH):
+        print(f"\nERROR: Model not found at '{MODEL_PATH}'")
+        print("Run training first or update MODEL_PATH")
+        exit()
+    
+    choice = input("\nEnter choice (1/2/3): ").strip()
+    
+    if choice == "1":
+        detect_camera()
+    elif choice == "2":
+        path = input("Enter image path: ").strip()
+        detect_image(path)
+    elif choice == "3":
+        path = input("Enter video path: ").strip()
+        detect_video(path)
+    else:
+        print("Invalid choice. Running camera detection...")
+        detect_camera()
