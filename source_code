@@ -16,7 +16,7 @@ from datetime import datetime
 # ============================================================
 
 # Path to trained model weights
-MODEL_PATH =r"D:\Projects\Advance security systerm\mubeen weapon weaight 100 working\weights\best.pt"
+MODEL_PATH = ===================================================
 
 # Detection settings
 CONFIDENCE = 0.5        # Minimum confidence (0.0 - 1.0)
